@@ -1,5 +1,5 @@
 
-from keras.layers import Input, Conv2D, Flatten, Dense, Conv2DTranspose, Reshape, Lambda, Activation, BatchNormalization, LeakyReLU
+from keras.layers import Input, Conv2D, Flatten, Dense, Conv2DTranspose, Reshape, Lambda, Activation, BatchNormalization, LeakyReLU, Dropout
 from keras.models import Model
 from keras import backend as K
 from keras.optimizers import Adam
@@ -71,6 +71,7 @@ class VariationalAutoencoder():
                 x = BatchNormalization()(x)
 
             x = LeakyReLU()(x)
+            x = Dropout(rate = 0.25)(x)
 
         shape_before_flattening = K.int_shape(x)[1:]
 
@@ -113,8 +114,11 @@ class VariationalAutoencoder():
                 if self.use_batch_norm:
                     x = BatchNormalization()(x)
                 x = LeakyReLU()(x)
+                x = Dropout(rate = 0.25)(x)
             else:
                 x = Activation('sigmoid')(x)
+
+            
 
         decoder_output = x
 
