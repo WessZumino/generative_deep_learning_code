@@ -39,6 +39,7 @@ class GAN():
         , generator_activation
         , generator_dropout_rate
         , generator_learning_rate
+        , optimiser
         , z_dim
         ):
 
@@ -64,6 +65,8 @@ class GAN():
         self.generator_activation = generator_activation
         self.generator_dropout_rate = generator_dropout_rate
         self.generator_learning_rate = generator_learning_rate
+        
+        self.optimiser = optimiser
 
         self.z_dim = z_dim
 
@@ -94,13 +97,14 @@ class GAN():
                 , strides = self.discriminator_conv_strides[i]
                 , padding = self.discriminator_conv_padding
                 , name = 'discriminator_conv_' + str(i)
+                #, kernel_initializer = self.weight_init
                 )(x)
 
             if self.discriminator_batch_norm_momentum:
                 x = BatchNormalization(momentum = self.discriminator_batch_norm_momentum)(x)
 
             if self.discriminator_activation == 'leaky_relu':
-                x = LeakyReLU(x)
+                x = LeakyReLU(alpha = 0.2)(x)
             else:
                 x = Activation(self.discriminator_activation)(x)
 
@@ -109,7 +113,9 @@ class GAN():
 
         x = Flatten()(x)
         
-        discriminator_output = Dense(1, activation='sigmoid')(x)
+        discriminator_output = Dense(1, activation='sigmoid'
+        #, kernel_initializer = self.weight_init
+        )(x)
 
         discriminator = Model(discriminator_input, discriminator_output)
 
@@ -121,12 +127,14 @@ class GAN():
 
         generator_input = Input(shape=(self.z_dim,), name='generator_input')
 
-        x = Dense(np.prod(self.generator_initial_dense_layer_size))(generator_input)
+        x = Dense(np.prod(self.generator_initial_dense_layer_size)
+            #, kernel_initializer = self.weight_init
+            )(generator_input)
         if self.generator_batch_norm_momentum:
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
         if self.generator_activation == 'leaky_relu':
-            x = LeakyReLU(x)
+            x = LeakyReLU(alpha=0.2)(x)
         else:
             x = Activation(self.generator_activation)(x)
 
@@ -147,13 +155,14 @@ class GAN():
                     , strides = self.generator_conv_t_strides[i]
                     , padding = self.generator_conv_t_padding
                     , name = 'generator_conv_t_' + str(i)
+                    #, kernel_initializer = self.weight_init
                     )(x)
 
                 if self.generator_batch_norm_momentum:
                     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
                 if self.generator_activation == 'leaky_relu':
-                    x = LeakyReLU(x)
+                    x = LeakyReLU(alpha=0.2)(x)
                 else:
                     x = Activation(self.generator_activation)(x)
                     
@@ -165,6 +174,7 @@ class GAN():
                     , strides = self.generator_conv_t_strides[i]
                     , padding = self.generator_conv_t_padding
                     , name = 'generator_conv_t_' + str(i)
+                    #, kernel_initializer = self.weight_init
                     )(x)
                     
                 x = Activation('tanh')(x)
@@ -180,8 +190,16 @@ class GAN():
     def _build_adversarial(self):
         
         ### COMPILE DISCRIMINATOR
-        # #Adam(lr=self.discriminator_learning_rate)
-        self.discriminator.compile(optimizer=RMSprop(lr=self.discriminator_learning_rate) , loss = 'binary_crossentropy',  metrics = ['accuracy'])
+
+        if self.optimiser == 'adam':
+            opti = Adam(lr=self.discriminator_learning_rate)
+        elif self.optimiser == 'rmsprop':
+            opti = RMSprop(lr=self.discriminator_learning_rate)
+        else:
+            opti = Adam(lr=self.discriminator_learning_rate)
+        
+        
+        self.discriminator.compile(optimizer=opti , loss = 'binary_crossentropy',  metrics = ['accuracy'])
         
         ### COMPILE THE FULL GAN
 
@@ -193,8 +211,16 @@ class GAN():
         model_output = self.discriminator(self.generator(model_input))
 
         model = Model(model_input, model_output)
-        #Adam(lr = self.generator_learning_rate) 
-        model.compile(optimizer=RMSprop(lr=self.generator_learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
+
+        if self.optimiser == 'adam':
+            opti = Adam(lr = self.generator_learning_rate) 
+        elif self.optimiser == 'rmsprop':
+            opti = RMSprop(lr=self.generator_learning_rate)
+        else:
+            opti = Adam(lr = self.generator_learning_rate) 
+        
+        
+        model.compile(optimizer=opti, loss='binary_crossentropy', metrics=['accuracy'])
 
         return model
 
@@ -268,6 +294,8 @@ class GAN():
 
             noise = np.random.normal(0, 1, (batch_size, self.z_dim))
             y = np.ones([batch_size,1])
+            # g_loss = 0
+            # g_acc = 0
             g_loss, g_acc = self.model.train_on_batch(noise, y)
 
             # Plot the progress
@@ -296,13 +324,16 @@ class GAN():
         gen_imgs = self.generator.predict(noise)
 
         #Rescale images 0 - 1
-        gen_imgs = 0.5 * gen_imgs + 1
+
+        gen_imgs = 0.5 * (gen_imgs + 1)
+        gen_imgs = np.clip(gen_imgs, 0, 1)
 
         fig, axs = plt.subplots(r, c)
         cnt = 0
+
         for i in range(r):
             for j in range(c):
-                axs[i,j].imshow(gen_imgs[cnt, :,:,0], cmap='gray_r')
+                axs[i,j].imshow(np.squeeze(gen_imgs[cnt, :,:,:]), cmap = 'gray_r')
                 axs[i,j].axis('off')
                 cnt += 1
         fig.savefig(os.path.join(run_folder, "images/sample_%d.png" % epoch))
