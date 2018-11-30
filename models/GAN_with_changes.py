@@ -39,6 +39,7 @@ class GAN():
         , generator_activation
         , generator_dropout_rate
         , generator_learning_rate
+        , optimiser
         , z_dim
         ):
 
@@ -64,6 +65,8 @@ class GAN():
         self.generator_activation = generator_activation
         self.generator_dropout_rate = generator_dropout_rate
         self.generator_learning_rate = generator_learning_rate
+        
+        self.optimiser = optimiser
 
         self.z_dim = z_dim
 
@@ -100,7 +103,7 @@ class GAN():
                 x = BatchNormalization(momentum = self.discriminator_batch_norm_momentum)(x)
 
             if self.discriminator_activation == 'leaky_relu':
-                x = LeakyReLU(x)
+                x = LeakyReLU(alpha = 0.2)(x)
             else:
                 x = Activation(self.discriminator_activation)(x)
 
@@ -126,7 +129,7 @@ class GAN():
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
         if self.generator_activation == 'leaky_relu':
-            x = LeakyReLU(x)
+            x = LeakyReLU(alpha=0.2)(x)
         else:
             x = Activation(self.generator_activation)(x)
 
@@ -153,7 +156,7 @@ class GAN():
                     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
                 if self.generator_activation == 'leaky_relu':
-                    x = LeakyReLU(x)
+                    x = LeakyReLU(alpha=0.2)(x)
                 else:
                     x = Activation(self.generator_activation)(x)
                     
@@ -180,8 +183,16 @@ class GAN():
     def _build_adversarial(self):
         
         ### COMPILE DISCRIMINATOR
-        # #Adam(lr=self.discriminator_learning_rate)
-        self.discriminator.compile(optimizer=RMSprop(lr=self.discriminator_learning_rate) , loss = 'binary_crossentropy',  metrics = ['accuracy'])
+
+        if self.optimiser == 'adam':
+            opti = Adam(lr=self.discriminator_learning_rate)
+        elif self.optimiser == 'rmsprop':
+            opti = RMSprop(lr=self.discriminator_learning_rate)
+        else:
+            opti = Adam(lr=self.discriminator_learning_rate)
+        
+        
+        self.discriminator.compile(optimizer=opti , loss = 'binary_crossentropy',  metrics = ['accuracy'])
         
         ### COMPILE THE FULL GAN
 
@@ -193,7 +204,19 @@ class GAN():
         model_output = self.discriminator(self.generator(model_input))
 
         model = Model(model_input, model_output)
-        #Adam(lr = self.generator_learning_rate) 
+
+        if self.optimiser == 'adam':
+            opti = Adam(lr = self.generator_learning_rate) 
+        elif self.optimiser == 'rmsprop':
+            opti = RMSprop(lr=self.generator_learning_rate)
+        else:
+            opti = Adam(lr = self.generator_learning_rate) 
+        
+        
+        self.discriminator.compile(optimizer=opti , loss = 'binary_crossentropy',  metrics = ['accuracy'])
+       
+
+
         model.compile(optimizer=RMSprop(lr=self.generator_learning_rate), loss='binary_crossentropy', metrics=['accuracy'])
 
         return model
@@ -296,13 +319,16 @@ class GAN():
         gen_imgs = self.generator.predict(noise)
 
         #Rescale images 0 - 1
-        gen_imgs = 0.5 * gen_imgs + 1
+
+        gen_imgs = 0.5 * (gen_imgs + 1)
+        gen_imgs = np.clip(gen_imgs, 0, 1)
 
         fig, axs = plt.subplots(r, c)
         cnt = 0
+
         for i in range(r):
             for j in range(c):
-                axs[i,j].imshow(gen_imgs[cnt, :,:,0], cmap='gray_r')
+                axs[i,j].imshow(np.squeeze(gen_imgs[cnt, :,:,:]), cmap = 'gray_r')
                 axs[i,j].axis('off')
                 cnt += 1
         fig.savefig(os.path.join(run_folder, "images/sample_%d.png" % epoch))
