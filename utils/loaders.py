@@ -1,7 +1,7 @@
 import pickle
 import os
 
-from keras.datasets import mnist
+from keras.datasets import mnist, cifar100,cifar10
 from keras.preprocessing.image import ImageDataGenerator
 
 import pandas as pd
@@ -115,7 +115,9 @@ def load_safari(folder):
         x = np.load(txt_path)
         x = (x.astype('float32') - 127.5) / 127.5
         # x = x.astype('float32') / 255.0
+        
         x = x.reshape(x.shape[0], 28, 28, 1)
+        
         y = [i] * len(x)  
         np.random.seed(seed)
         np.random.shuffle(x)
@@ -133,3 +135,17 @@ def load_safari(folder):
         
     return xtotal, ytotal
 
+
+
+def load_cifar10(label):
+
+    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+
+    mask = [y[0]==label for y in y_train]
+
+    x_train = x_train[mask]
+    y_train = y_train[mask]
+
+    x_train = (x_train.astype('float32') - 127.5) / 127.5
+ 
+    return (x_train, y_train)
