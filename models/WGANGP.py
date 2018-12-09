@@ -19,9 +19,12 @@ import matplotlib.pyplot as plt
 
 
 class RandomWeightedAverage(_Merge):
+    def __init__(self, batch_size):
+        super().__init__()
+        self.batch_size = batch_size
     """Provides a (random) weighted average between real and generated image samples"""
     def _merge_function(self, inputs):
-        alpha = K.random_uniform((32, 1, 1, 1))
+        alpha = K.random_uniform((self.batch_size, 1, 1, 1))
         return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
 
 class WGANGP():
@@ -36,17 +39,18 @@ class WGANGP():
         , critic_dropout_rate
         , critic_learning_rate
         , generator_initial_dense_layer_size
-        , generator_use_upsampling
-        , generator_conv_t_filters
-        , generator_conv_t_kernel_size
-        , generator_conv_t_strides
-        , generator_conv_t_padding
+        , generator_upsample
+        , generator_conv_filters
+        , generator_conv_kernel_size
+        , generator_conv_padding
         , generator_batch_norm_momentum
         , generator_activation
         , generator_dropout_rate
         , generator_learning_rate
         , optimiser
+        , grad_weight
         , z_dim
+        , batch_size
         ):
 
         self.name = 'gan'
@@ -62,11 +66,10 @@ class WGANGP():
         self.critic_learning_rate = critic_learning_rate
 
         self.generator_initial_dense_layer_size = generator_initial_dense_layer_size
-        self.generator_use_upsampling = generator_use_upsampling
-        self.generator_conv_t_filters = generator_conv_t_filters
-        self.generator_conv_t_kernel_size = generator_conv_t_kernel_size
-        self.generator_conv_t_strides = generator_conv_t_strides
-        self.generator_conv_t_padding = generator_conv_t_padding
+        self.generator_upsample = generator_upsample
+        self.generator_conv_filters = generator_conv_filters
+        self.generator_conv_kernel_size = generator_conv_kernel_size
+        self.generator_conv_padding = generator_conv_padding
         self.generator_batch_norm_momentum = generator_batch_norm_momentum
         self.generator_activation = generator_activation
         self.generator_dropout_rate = generator_dropout_rate
@@ -77,15 +80,21 @@ class WGANGP():
         self.z_dim = z_dim
 
         self.n_layers_critic = len(critic_conv_filters)
-        self.n_layers_generator = len(generator_conv_t_filters)
+        self.n_layers_generator = len(generator_conv_filters)
 
-        self.weight_init = RandomNormal(mean=0., stddev=0.02)
+        self.weight_init = RandomNormal(mean=0., stddev=0.02) # 'he_normal' #RandomNormal(mean=0., stddev=0.02)
+        self.grad_weight = grad_weight
+        self.batch_size = batch_size
 
-    
-        self.critic = self._build_critic()
-        self.generator = self._build_generator()
 
-        self.model = self._build_adversarial()
+        self.d_losses = []
+        self.g_losses = []
+        self.epoch = 0
+
+        self._build_critic()
+        self._build_generator()
+
+        self._build_adversarial()
 
     def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
         """
@@ -108,7 +117,21 @@ class WGANGP():
         return K.mean(y_true * y_pred)
 
     def accuracy(self, y_true, y_pred):
-        return K.mean(K.clip(K.sign(-y_true) * K.sign(y_pred),0,1))
+
+        y_pred = y_pred - K.mean(y_pred)
+
+        return K.mean(K.clip(K.sign(y_true) * K.sign(-y_pred),0,1))
+
+    def mean_pred(self, y_true, y_pred):
+
+        return K.mean(y_pred)
+
+    def get_activation(self):
+        if self.critic_activation == 'leaky_relu':
+            layer = LeakyReLU(alpha = 0.2)
+        else:
+            layer = Activation(self.critic_activation)
+        return layer
 
     def _build_critic(self):
 
@@ -131,10 +154,7 @@ class WGANGP():
             if self.critic_batch_norm_momentum and i > 0:
                 x = BatchNormalization(momentum = self.critic_batch_norm_momentum)(x)
 
-            if self.critic_activation == 'leaky_relu':
-                x = LeakyReLU(alpha = 0.2)(x)
-            else:
-                x = Activation(self.critic_activation)(x)
+            x = self.get_activation()(x)
 
             if self.critic_dropout_rate:
                 x = Dropout(rate = self.critic_dropout_rate)(x)
@@ -145,9 +165,7 @@ class WGANGP():
         , kernel_initializer = self.weight_init
         )(x)
 
-        critic = Model(critic_input, critic_output)
-
-        return critic
+        self.critic = Model(critic_input, critic_output)
 
     def _build_generator(self):
 
@@ -155,16 +173,13 @@ class WGANGP():
 
         generator_input = Input(shape=(self.z_dim,), name='generator_input')
 
-        x = Dense(np.prod(self.generator_initial_dense_layer_size)
-            , kernel_initializer = self.weight_init
-            )(generator_input)
+        x = generator_input
+
+        x = Dense(np.prod(self.generator_initial_dense_layer_size), kernel_initializer = self.weight_init)(x)
         if self.generator_batch_norm_momentum:
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
-
-        if self.generator_activation == 'leaky_relu':
-            x = LeakyReLU(alpha=0.2)(x)
-        else:
-            x = Activation(self.generator_activation)(x)
+        
+        x = self.get_activation()(x)
 
         x = Reshape(self.generator_initial_dense_layer_size)(x)
 
@@ -173,73 +188,65 @@ class WGANGP():
 
         for i in range(self.n_layers_generator):
 
-            if i < self.n_layers_generator - 1:
-                if self.generator_use_upsampling[i]:
-                    x = UpSampling2D()(x)
+            # if self.generator_upsample[i]:
+            #     x = UpSampling2D()(x)
 
-                x = Conv2DTranspose(
-                    filters = self.generator_conv_t_filters[i]
-                    , kernel_size = self.generator_conv_t_kernel_size[i]
-                    , strides = self.generator_conv_t_strides[i]
-                    , padding = self.generator_conv_t_padding
-                    , name = 'generator_conv_t_' + str(i)
-                    , kernel_initializer = self.weight_init
-                    )(x)
+            x = Conv2DTranspose(
+                filters = self.generator_conv_filters[i]
+                , kernel_size = self.generator_conv_kernel_size[i]
+                , padding = self.generator_conv_padding
+                , strides = self.generator_upsample[i]
+                , name = 'generator_conv_' + str(i)
+                , kernel_initializer = self.weight_init
+                )(x)
+
+            if i < self.n_layers_generator - 1:
 
                 if self.generator_batch_norm_momentum:
                     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
-                if self.generator_activation == 'leaky_relu':
-                    x = LeakyReLU(alpha=0.2)(x)
-                else:
-                    x = Activation(self.generator_activation)(x)
-                    
+                x = self.get_activation()(x)
                 
             else:
-                x = Conv2DTranspose(
-                    filters = self.generator_conv_t_filters[i]
-                    , kernel_size = self.generator_conv_t_kernel_size[i]
-                    , strides = self.generator_conv_t_strides[i]
-                    , padding = self.generator_conv_t_padding
-                    , name = 'generator_conv_t_' + str(i)
-                    , kernel_initializer = self.weight_init
-                    )(x)
-                    
                 x = Activation('tanh')(x)
 
-
         generator_output = x
+        self.generator = Model(generator_input, generator_output)
 
-        generator = Model(generator_input, generator_output)
 
-        return generator
 
+
+    def get_opti(self, lr):
+        if self.optimiser == 'adam':
+            opti = Adam(lr=lr, beta_1=0.5)
+        elif self.optimiser == 'rmsprop':
+            opti = RMSprop(lr=lr)
+        else:
+            opti = Adam(lr=lr)
+
+        return opti
+
+
+    def set_trainable(self, m, val):
+        m.trainable = val
+        for l in m.layers:
+            l.trainable = val
 
     def _build_adversarial(self):
-        
-        ### COMPILE critic
-
-        if self.optimiser == 'adam':
-            opti = Adam(lr=self.critic_learning_rate)
-        elif self.optimiser == 'rmsprop':
-            opti = RMSprop(lr=self.critic_learning_rate)
-        else:
-            opti = Adam(lr=self.critic_learning_rate)
-        
+                
         #-------------------------------
         # Construct Computational Graph
         #       for the Critic
         #-------------------------------
 
         # Freeze generator's layers while training critic
-        self.generator.trainable = False
+        self.set_trainable(self.generator, False)
 
         # Image input (real sample)
         real_img = Input(shape=self.input_dim)
 
-        # Noise input
+        # Fake image
         z_disc = Input(shape=(self.z_dim,))
-        # Generate image based of noise (fake sample)
         fake_img = self.generator(z_disc)
 
         # critic determines validity of the real and fake images
@@ -247,9 +254,7 @@ class WGANGP():
         valid = self.critic(real_img)
 
         # Construct weighted average between real and fake images
-        # print(real_img.shape)
-        # print(fake_img.shape)
-        interpolated_img = RandomWeightedAverage()([real_img, fake_img])
+        interpolated_img = RandomWeightedAverage(self.batch_size)([real_img, fake_img])
         # Determine validity of weighted sample
         validity_interpolated = self.critic(interpolated_img)
 
@@ -262,22 +267,20 @@ class WGANGP():
         self.critic_model = Model(inputs=[real_img, z_disc],
                             outputs=[valid, fake, validity_interpolated])
 
-        self.critic_model.compile(loss=[self.wasserstein,
-                                              self.wasserstein,
-                                              partial_gp_loss],
-                                        optimizer=opti,
-                                        loss_weights=[1, 1, 10])
+        self.critic_model.compile(
+            loss=[self.wasserstein,self.wasserstein, partial_gp_loss]
+            ,optimizer=self.get_opti(self.critic_learning_rate)
+            ,loss_weights=[1, 1, self.grad_weight]
+            )
         
-        ### COMPILE THE FULL GAN
-
         #-------------------------------
         # Construct Computational Graph
         #         for Generator
         #-------------------------------
 
         # For the generator we freeze the critic's layers
-        self.critic.trainable = False
-        self.generator.trainable = True
+        self.set_trainable(self.critic, False)
+        self.set_trainable(self.generator, True)
 
         # Sampled noise for input to generator
         model_input = Input(shape=(self.z_dim,))
@@ -286,82 +289,74 @@ class WGANGP():
         # Discriminator determines validity
         model_output = self.critic(img)
         # Defines generator model
-        model = Model(model_input, model_output)
+        self.model = Model(model_input, model_output)
 
-        if self.optimiser == 'adam':
-            opti = Adam(lr = self.generator_learning_rate) 
-        elif self.optimiser == 'rmsprop':
-            opti = RMSprop(lr=self.generator_learning_rate)
-        else:
-            opti = Adam(lr = self.generator_learning_rate) 
-        
-        
-        model.compile(optimizer=opti, loss=self.wasserstein, metrics=[self.accuracy])
+        self.model.compile(optimizer=self.get_opti(self.generator_learning_rate)
+        , loss=self.wasserstein
+        )
 
-        return model
+        self.set_trainable(self.critic, True)
 
-
-    
     def train_critic(self, x_train, batch_size, using_generator):
 
-        valid = -np.ones((batch_size,1))
-        fake = np.ones((batch_size,1))
-        dummy = np.zeros((batch_size, 1)) # Dummy gt for gradient penalty
+        valid = np.ones((batch_size,1), dtype=np.float32)
+        fake = -np.ones((batch_size,1), dtype=np.float32)
+        dummy = np.zeros((batch_size, 1), dtype=np.float32) # Dummy gt for gradient penalty
 
         if using_generator:
             true_imgs = next(x_train)[0]
+            if true_imgs.shape[0] != batch_size:
+                true_imgs = next(x_train)[0]
         else:
             idx = np.random.randint(0, x_train.shape[0], batch_size)
             true_imgs = x_train[idx]
     
         noise = np.random.normal(0, 1, (batch_size, self.z_dim))
 
-        d_loss = self.critic_model.train_on_batch([true_imgs, noise],
-                                                                [valid, fake, dummy])
+        d_loss = self.critic_model.train_on_batch([true_imgs, noise], [valid, fake, dummy])
         return d_loss
 
     def train_generator(self, batch_size):
-        valid = -np.ones((batch_size,1))
+        valid = np.ones((batch_size,1), dtype=np.float32)
         noise = np.random.normal(0, 1, (batch_size, self.z_dim))
         return self.model.train_on_batch(noise, valid)
 
 
     def train(self, x_train, batch_size, epochs, run_folder, print_every_n_batches = 10
-    , initial_epoch = 0
     , n_critic = 5
     , using_generator = False):
 
-        d_losses = []
-        g_losses = []
+        for epoch in range(self.epoch, self.epoch + epochs):
 
-        d_accs = []
-        g_accs = []
+            if epoch % 100 == 0:
+                critic_loops = 5
+            else:
+                critic_loops = n_critic
 
-        for epoch in range(initial_epoch, initial_epoch + epochs):
-            
-            for _ in range(n_critic):
-
+            for _ in range(critic_loops):
                 d_loss = self.train_critic(x_train, batch_size, using_generator)
-                d_acc = 0
 
-            g_loss, g_acc = self.train_generator(batch_size)
+            g_loss = self.train_generator(batch_size)
 
             # Plot the progress
-            print ("%d (%d, %d) [D loss: (%.1f)] [D acc: (%.3f)] [G loss: %.1f] [G acc: %.3f]" % (epoch, n_critic, 1, d_loss[0], d_acc, g_loss, g_acc))
+            # print ("%d (%d, %d) [D loss: (%.1f)(R %.1f, F %.1f, G %.1f)] [D acc: (R %.3f, F %.3f)] [D mean: (R %.1f, F %.1f)]" % (epoch, critic_loops, 1, d_loss[0], d_loss[1],d_loss[2],d_loss[3],d_loss[4],d_loss[6],d_loss[5],d_loss[7]))
+            # print ("%d (%d, %d) [G loss: %.1f] [G acc: %.3f] [G mean: %.1f]" % (epoch, critic_loops, 1, g_loss[0], g_loss[1], g_loss[2]))
+            print ("%d (%d, %d) [D loss: (%.1f)(R %.1f, F %.1f, G %.1f)] [G loss: %.1f]" % (epoch, critic_loops, 1, d_loss[0], d_loss[1],d_loss[2],d_loss[3],g_loss))
+            
 
-            d_losses.append(d_loss)
-            g_losses.append(g_loss)
-            d_accs.append(d_acc)
-            g_accs.append(g_acc)
+
+            self.d_losses.append(d_loss)
+            self.g_losses.append(g_loss)
 
             # If at save interval => save generated image samples
             if epoch % print_every_n_batches == 0:
-                self.sample_images(initial_epoch + epoch, run_folder)
+                self.sample_images(run_folder)
+                self.model.save_weights(os.path.join(run_folder, 'weights/weights.h5'))
 
-        # return d_losses_real, d_losses_fake, g_losses, d_accs_real, d_accs_fake, g_accs
-        return d_losses, g_losses, d_accs, g_accs
+            self.epoch+=1
 
-    def sample_images(self, epoch, run_folder):
+
+    def sample_images(self, run_folder):
         r, c = 5, 5
         noise = np.random.normal(0, 1, (r * c, self.z_dim))
         gen_imgs = self.generator.predict(noise)
@@ -371,7 +366,7 @@ class WGANGP():
         gen_imgs = 0.5 * (gen_imgs + 1)
         gen_imgs = np.clip(gen_imgs, 0, 1)
 
-        fig, axs = plt.subplots(r, c)
+        fig, axs = plt.subplots(r, c, figsize=(15,15))
         cnt = 0
 
         for i in range(r):
@@ -379,7 +374,7 @@ class WGANGP():
                 axs[i,j].imshow(np.squeeze(gen_imgs[cnt, :,:,:]), cmap = 'gray_r')
                 axs[i,j].axis('off')
                 cnt += 1
-        fig.savefig(os.path.join(run_folder, "images/sample_%d.png" % epoch))
+        fig.savefig(os.path.join(run_folder, "images/sample_%d.png" % self.epoch))
         plt.close()
 
 
@@ -414,25 +409,21 @@ class WGANGP():
                     , self.critic_dropout_rate
                     , self.critic_learning_rate
                     , self.generator_initial_dense_layer_size
-                    , self.generator_use_upsampling
-                    , self.generator_conv_t_filters
-                    , self.generator_conv_t_kernel_size
-                    , self.generator_conv_t_strides
-                    , self.generator_conv_t_padding
+                    , self.generator_upsample
+                    , self.generator_conv_filters
+                    , self.generator_conv_kernel_size
+                    , self.generator_conv_padding
                     , self.generator_batch_norm_momentum
                     , self.generator_activation
                     , self.generator_dropout_rate
                     , self.generator_learning_rate
+                    , self.optimiser
+                    , self.grad_weight
                     , self.z_dim
+                    , self.batch_size
                     ], f)
 
             self.plot_model(folder)
-
-            
-
-            
-
-
 
 
     def load_weights(self, filepath):
