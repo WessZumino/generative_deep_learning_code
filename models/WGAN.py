@@ -31,6 +31,7 @@ class WGAN():
         , generator_upsample
         , generator_conv_filters
         , generator_conv_kernel_size
+        , generator_conv_strides
         , generator_conv_padding
         , generator_batch_norm_momentum
         , generator_activation
@@ -56,6 +57,7 @@ class WGAN():
         self.generator_upsample = generator_upsample
         self.generator_conv_filters = generator_conv_filters
         self.generator_conv_kernel_size = generator_conv_kernel_size
+        self.generator_conv_strides = generator_conv_strides
         self.generator_conv_padding = generator_conv_padding
         self.generator_batch_norm_momentum = generator_batch_norm_momentum
         self.generator_activation = generator_activation
@@ -141,7 +143,11 @@ class WGAN():
 
         x = generator_input
 
-        x = Dense(np.prod(self.generator_initial_dense_layer_size), kernel_initializer = self.weight_init)(x)
+        x = Dense(np.prod(self.generator_initial_dense_layer_size)
+        ,kernel_initializer = self.weight_init
+        )(x)
+
+        
 
         if self.generator_batch_norm_momentum:
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
@@ -162,7 +168,7 @@ class WGAN():
                 filters = self.generator_conv_filters[i]
                 , kernel_size = self.generator_conv_kernel_size[i]
                 , padding = self.generator_conv_padding
-                # , strides = self.generator_upsample[i]
+                , strides = self.generator_conv_strides[i]
                 , name = 'generator_conv_' + str(i)
                 , kernel_initializer = self.weight_init
                 )(x)
@@ -351,6 +357,7 @@ class WGAN():
                     , self.generator_upsample
                     , self.generator_conv_filters
                     , self.generator_conv_kernel_size
+                    , self.generator_conv_strides
                     , self.generator_conv_padding
                     , self.generator_batch_norm_momentum
                     , self.generator_activation
