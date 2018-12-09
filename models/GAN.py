@@ -31,6 +31,7 @@ class GAN():
         , generator_upsample
         , generator_conv_filters
         , generator_conv_kernel_size
+        , generator_conv_strides
         , generator_conv_padding
         , generator_batch_norm_momentum
         , generator_activation
@@ -56,6 +57,7 @@ class GAN():
         self.generator_upsample = generator_upsample
         self.generator_conv_filters = generator_conv_filters
         self.generator_conv_kernel_size = generator_conv_kernel_size
+        self.generator_conv_strides = generator_conv_strides
         self.generator_conv_padding = generator_conv_padding
         self.generator_batch_norm_momentum = generator_batch_norm_momentum
         self.generator_activation = generator_activation
@@ -128,10 +130,12 @@ class GAN():
 
         x = generator_input
 
-        x = Dense(np.prod(self.generator_initial_dense_layer_size))(x)
+        x = Dense(np.prod(self.generator_initial_dense_layer_size), kernel_initializer = self.weight_init)(x)
 
-        # if self.generator_batch_norm_momentum:
-        #     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
+        
+
+        if self.generator_batch_norm_momentum:
+            x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
         x = self.get_activation()(x)
 
@@ -142,14 +146,16 @@ class GAN():
 
         for i in range(self.n_layers_generator):
 
-            if self.generator_upsample[i]:
+            if self.generator_upsample[i] == 2:
                 x = UpSampling2D()(x)
 
-            x = Conv2D(
+            x = Conv2DTranspose(
                 filters = self.generator_conv_filters[i]
                 , kernel_size = self.generator_conv_kernel_size[i]
                 , padding = self.generator_conv_padding
+                , strides = self.generator_conv_strides[i]
                 , name = 'generator_conv_' + str(i)
+                , kernel_initializer = self.weight_init
                 )(x)
 
             if i < self.n_layers_generator - 1:
@@ -172,7 +178,7 @@ class GAN():
        
     def get_opti(self, lr):
         if self.optimiser == 'adam':
-            opti = Adam(lr=lr, beta_1=0.5, beta_2=0.9)
+            opti = Adam(lr=lr, beta_1=0.5)
         elif self.optimiser == 'rmsprop':
             opti = RMSprop(lr=lr)
         else:
@@ -204,7 +210,9 @@ class GAN():
         model_output = self.discriminator(self.generator(model_input))
         self.model = Model(model_input, model_output)
 
-        model.compile(optimizer=self.get_opti(self.generator_learning_rate) , loss='binary_crossentropy', metrics=['accuracy'])
+        self.model.compile(optimizer=self.get_opti(self.generator_learning_rate) , loss='binary_crossentropy', metrics=['accuracy'])
+
+        self.set_trainable(self.discriminator, True)
 
 
 
@@ -227,9 +235,10 @@ class GAN():
 
         d_loss_real =   self.discriminator.train_on_batch(true_imgs, valid)
         d_loss_fake =   self.discriminator.train_on_batch(gen_imgs, fake)
-        d_loss = 0.5 * (d_loss_real[0] + d_loss_fake[0])
+        d_loss =  0.5 * (d_loss_real[0] + d_loss_fake[0])
+        d_acc = 0.5 * (d_loss_real[1] + d_loss_fake[1])
 
-        return [d_loss, d_loss_real[0], d_loss_fake[0], d_loss_real[1], d_loss_fake[1]]
+        return [d_loss, d_loss_real[0], d_loss_fake[0], d_acc, d_loss_real[1], d_loss_fake[1]]
 
     def train_generator(self, batch_size):
         valid = np.ones((batch_size,1))
@@ -247,7 +256,7 @@ class GAN():
             g_loss = self.train_generator(batch_size)
 
             # Plot the progress
-            print ("%d [D loss: (%.1f)(R %.1f, F %.1f)] [D acc: (%.3f, %.3f)] [G loss: %.1f] [G acc: %.3f]" % (epoch, d_loss[0], d_loss[1], d_loss[2], d_loss[3], d_loss[4], g_loss[0], g_loss[1]))
+            print ("%d [D loss: (%.3f)(R %.3f, F %.3f)] [D acc: (%.3f)(%.3f, %.3f)] [G loss: %.3f] [G acc: %.3f]" % (epoch, d_loss[0], d_loss[1], d_loss[2], d_loss[3], d_loss[4], d_loss[5], g_loss[0], g_loss[1]))
 
             self.d_losses.append(d_loss)
             self.g_losses.append(g_loss)
@@ -292,10 +301,6 @@ class GAN():
 
 
 
-        
-
-
-
     def save(self, folder):
 
         if not os.path.exists(folder):
@@ -319,6 +324,7 @@ class GAN():
                 , self.generator_upsample
                 , self.generator_conv_filters
                 , self.generator_conv_kernel_size
+                , self.generator_conv_strides
                 , self.generator_conv_padding
                 , self.generator_batch_norm_momentum
                 , self.generator_activation
