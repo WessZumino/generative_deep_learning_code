@@ -89,9 +89,6 @@ class WGAN():
     def wasserstein(self, y_true, y_pred):
         return K.mean(y_true * y_pred)
 
-    def accuracy(self, y_true, y_pred):
-        return K.mean(K.clip(K.sign(y_true) * K.sign(-y_pred),0,1))
-
     def get_activation(self):
         if self.critic_activation == 'leaky_relu':
             layer = LeakyReLU(alpha = 0.2)
@@ -265,6 +262,16 @@ class WGAN():
             weights = [np.clip(w, -clip_threshold, clip_threshold) for w in weights]
             l.set_weights(weights)
 
+        # for l in self.critic.layers:
+        
+        #     weights = l.get_weights()
+        #     if 'batch_normalization' in l.get_config()['name']:
+        #         weights = [np.clip(w, -0.01, 0.01) for w in weights[:2]]+ weights[2:]
+        #     else:
+        #         weights = [np.clip(w, -0.01, 0.01) for w in weights]
+            
+            # l.set_weights(weights)
+
         return [d_loss, d_loss_real, d_loss_fake]
 
     def train_generator(self, batch_size):
@@ -302,6 +309,7 @@ class WGAN():
             if epoch % print_every_n_batches == 0:
                 self.sample_images(run_folder)
                 self.model.save_weights(os.path.join(run_folder, 'weights/weights.h5'))
+                self.save_model(run_folder)
             
             self.epoch+=1
 
@@ -369,7 +377,10 @@ class WGAN():
 
             self.plot_model(folder)
 
-         
+    def save_model(self, run_folder):
+        with open(os.path.join(run_folder, 'model.pkl'), 'wb') as f:
+            pickle.dump(self, f)
+
     def load_weights(self, filepath):
         self.model.load_weights(filepath)
 

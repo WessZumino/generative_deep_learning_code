@@ -265,6 +265,7 @@ class GAN():
             if epoch % print_every_n_batches == 0:
                 self.sample_images(run_folder)
                 self.model.save_weights(os.path.join(run_folder, 'weights/weights.h5'))
+                self.save_model(run_folder)
 
             self.epoch += 1
 
@@ -284,7 +285,7 @@ class GAN():
 
         for i in range(r):
             for j in range(c):
-                axs[i,j].imshow(np.squeeze(gen_imgs[cnt, :,:,:]), cmap = 'gray_r')
+                axs[i,j].imshow(np.squeeze(gen_imgs[cnt, :,:,:]), cmap = 'gray')
                 axs[i,j].axis('off')
                 cnt += 1
         fig.savefig(os.path.join(run_folder, "images/sample_%d.png" % self.epoch))
@@ -336,6 +337,9 @@ class GAN():
 
         self.plot_model(folder)
 
+    def save_model(self, run_folder):
+        with open(os.path.join(run_folder, 'model.pkl'), 'wb') as f:
+            pickle.dump(self, f)
 
     def load_weights(self, filepath):
         self.model.load_weights(filepath)

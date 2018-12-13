@@ -321,7 +321,7 @@ class WGAN():
         gen_imgs = 0.5 * (gen_imgs + 1)
         gen_imgs = np.clip(gen_imgs, 0, 1)
 
-        fig, axs = plt.subplots(r, c)
+        fig, axs = plt.subplots(r, c, figsize=(15,15))
         cnt = 0
 
         for i in range(r):
