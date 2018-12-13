@@ -162,6 +162,12 @@ class WGANGP():
                 x = Dropout(rate = self.critic_dropout_rate)(x)
 
         x = Flatten()(x)
+
+        x = Dense(512, activation=None
+        , kernel_initializer = self.weight_init
+        )(x)
+
+        x = self.get_activation()(x)
         
         critic_output = Dense(1, activation=None
         , kernel_initializer = self.weight_init
@@ -354,6 +360,8 @@ class WGANGP():
             if epoch % print_every_n_batches == 0:
                 self.sample_images(run_folder)
                 self.model.save_weights(os.path.join(run_folder, 'weights/weights.h5'))
+                self.save_model(run_folder)
+                
 
             self.epoch+=1
 
@@ -428,6 +436,9 @@ class WGANGP():
 
             self.plot_model(folder)
 
+    def save_model(self, run_folder):
+        with open(os.path.join(run_folder, 'model.pkl'), 'wb') as f:
+            pickle.dump(self, f)
 
     def load_weights(self, filepath):
         self.model.load_weights(filepath)

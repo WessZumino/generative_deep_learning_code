@@ -137,15 +137,19 @@ def load_safari(folder):
 
 
 
-def load_cifar10(label):
+def load_cifar(label, num):
+    if num == 10:
+        (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    else:
+        (x_train, y_train), (x_test, y_test) = cifar100.load_data(label_mode = 'fine')
 
-    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
+    train_mask = [y[0]==label for y in y_train]
+    test_mask = [y[0]==label for y in y_test]
 
-    mask = [y[0]==label for y in y_train]
+    x_data = np.concatenate([x_train[train_mask], x_test[test_mask]])
+    y_data = np.concatenate([y_train[train_mask], y_test[test_mask]])
 
-    x_train = x_train[mask]
-    y_train = y_train[mask]
-
-    x_train = (x_train.astype('float32') - 127.5) / 127.5
+    x_data = (x_data.astype('float32') - 127.5) / 127.5
  
-    return (x_train, y_train)
+    return (x_data, y_data)
+
