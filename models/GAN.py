@@ -5,14 +5,13 @@ from keras.layers.merge import _Merge
 from keras.models import Model, Sequential
 from keras import backend as K
 from keras.optimizers import Adam, RMSprop
-from keras.callbacks import ModelCheckpoint 
 from keras.utils import plot_model
 from keras.initializers import RandomNormal
 
 import numpy as np
 import json
 import os
-import pickle
+import pickle as pkl
 import matplotlib.pyplot as plt
 
 
@@ -83,10 +82,10 @@ class GAN():
         self._build_adversarial()
 
     def get_activation(self):
-        if self.discriminator_activation == 'leaky_relu':
+        if activation == 'leaky_relu':
             layer = LeakyReLU(alpha = 0.2)
         else:
-            layer = Activation(self.discriminator_activation)
+            layer = Activation(activation)
         return layer
 
     def _build_discriminator(self):
@@ -110,7 +109,7 @@ class GAN():
             if self.discriminator_batch_norm_momentum and i > 0:
                 x = BatchNormalization(momentum = self.discriminator_batch_norm_momentum)(x)
 
-            x = self.get_activation()(x)
+            x = self.get_activation(self.discriminator_activation)(x)
 
             if self.discriminator_dropout_rate:
                 x = Dropout(rate = self.discriminator_dropout_rate)(x)
@@ -137,7 +136,7 @@ class GAN():
         if self.generator_batch_norm_momentum:
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
-        x = self.get_activation()(x)
+        x = self.get_activation(self.generator_activation)(x)
 
         x = Reshape(self.generator_initial_dense_layer_size)(x)
 
@@ -148,22 +147,30 @@ class GAN():
 
             if self.generator_upsample[i] == 2:
                 x = UpSampling2D()(x)
-
-            x = Conv2DTranspose(
-                filters = self.generator_conv_filters[i]
-                , kernel_size = self.generator_conv_kernel_size[i]
-                , padding = self.generator_conv_padding
-                , strides = self.generator_conv_strides[i]
-                , name = 'generator_conv_' + str(i)
-                , kernel_initializer = self.weight_init
+                x = Conv2D(
+                    filters = self.generator_conv_filters[i]
+                    , kernel_size = self.generator_conv_kernel_size[i]
+                    , padding = self.generator_conv_padding
+                    , name = 'generator_conv_' + str(i)
+                    , kernel_initializer = self.weight_init
                 )(x)
+            else:
+
+                x = Conv2DTranspose(
+                    filters = self.generator_conv_filters[i]
+                    , kernel_size = self.generator_conv_kernel_size[i]
+                    , padding = self.generator_conv_padding
+                    , strides = self.generator_conv_strides[i]
+                    , name = 'generator_conv_' + str(i)
+                    , kernel_initializer = self.weight_init
+                    )(x)
 
             if i < self.n_layers_generator - 1:
 
                 if self.generator_batch_norm_momentum:
                     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
-                x = self.get_activation()(x)
+                x = self.get_activation(self.generator_activation)(x)
                     
                 
             else:
@@ -233,12 +240,12 @@ class GAN():
         noise = np.random.normal(0, 1, (batch_size, self.z_dim))
         gen_imgs = self.generator.predict(noise)
 
-        d_loss_real =   self.discriminator.train_on_batch(true_imgs, valid)
-        d_loss_fake =   self.discriminator.train_on_batch(gen_imgs, fake)
-        d_loss =  0.5 * (d_loss_real[0] + d_loss_fake[0])
-        d_acc = 0.5 * (d_loss_real[1] + d_loss_fake[1])
+        d_loss_real, d_acc_real =   self.discriminator.train_on_batch(true_imgs, valid)
+        d_loss_fake, d_acc_fake =   self.discriminator.train_on_batch(gen_imgs, fake)
+        d_loss =  0.5 * (d_loss_real + d_loss_fake)
+        d_acc = 0.5 * (d_acc_real + d_acc_fake)
 
-        return [d_loss, d_loss_real[0], d_loss_fake[0], d_acc, d_loss_real[1], d_loss_fake[1]]
+        return [d_loss, d_loss_real, d_loss_fake, d_acc, d_acc_real, d_acc_fake]
 
     def train_generator(self, batch_size):
         valid = np.ones((batch_size,1))
@@ -252,16 +259,14 @@ class GAN():
 
         for epoch in range(self.epoch, self.epoch + epochs):
 
-            d_loss = self.train_discriminator(x_train, batch_size, using_generator)
-            g_loss = self.train_generator(batch_size)
+            d = self.train_discriminator(x_train, batch_size, using_generator)
+            g = self.train_generator(batch_size)
 
-            # Plot the progress
-            print ("%d [D loss: (%.3f)(R %.3f, F %.3f)] [D acc: (%.3f)(%.3f, %.3f)] [G loss: %.3f] [G acc: %.3f]" % (epoch, d_loss[0], d_loss[1], d_loss[2], d_loss[3], d_loss[4], d_loss[5], g_loss[0], g_loss[1]))
+            print ("%d [D loss: (%.3f)(R %.3f, F %.3f)] [D acc: (%.3f)(%.3f, %.3f)] [G loss: %.3f] [G acc: %.3f]" % (epoch, d[0], d[1], d[2], d[3], d[4], d[5], g[0], g[1]))
 
-            self.d_losses.append(d_loss)
-            self.g_losses.append(g_loss)
+            self.d_losses.append(d)
+            self.g_losses.append(g)
 
-            # If at save interval => save generated image samples
             if epoch % print_every_n_batches == 0:
                 self.sample_images(run_folder)
                 self.model.save_weights(os.path.join(run_folder, 'weights/weights.h5'))
@@ -274,8 +279,6 @@ class GAN():
         r, c = 5, 5
         noise = np.random.normal(0, 1, (r * c, self.z_dim))
         gen_imgs = self.generator.predict(noise)
-
-        #Rescale images 0 - 1
 
         gen_imgs = 0.5 * (gen_imgs + 1)
         gen_imgs = np.clip(gen_imgs, 0, 1)
@@ -338,8 +341,10 @@ class GAN():
         self.plot_model(folder)
 
     def save_model(self, run_folder):
-        with open(os.path.join(run_folder, 'model.pkl'), 'wb') as f:
-            pickle.dump(self, f)
+        self.model.save(os.path.join(run_folder, 'model.h5'))
+        self.discriminator.save(os.path.join(run_folder, 'discriminator.h5'))
+        self.generator.save(os.path.join(run_folder, 'generator.h5'))
+        pickle.dump(self, open( "obj.pkl", "wb" ))
 
     def load_weights(self, filepath):
         self.model.load_weights(filepath)
