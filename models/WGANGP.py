@@ -116,23 +116,18 @@ class WGANGP():
         return K.mean(gradient_penalty)
 
     def wasserstein(self, y_true, y_pred):
-        return K.mean(y_true * y_pred)
+        return -K.mean(y_true * y_pred)
 
-    def accuracy(self, y_true, y_pred):
-
-        y_pred = y_pred - K.mean(y_pred)
-
-        return K.mean(K.clip(K.sign(y_true) * K.sign(-y_pred),0,1))
 
     def mean_pred(self, y_true, y_pred):
 
         return K.mean(y_pred)
 
-    def get_activation(self):
-        if self.critic_activation == 'leaky_relu':
+    def get_activation(self, activation):
+        if activation == 'leaky_relu':
             layer = LeakyReLU(alpha = 0.2)
         else:
-            layer = Activation(self.critic_activation)
+            layer = Activation(activation)
         return layer
 
     def _build_critic(self):
@@ -156,18 +151,16 @@ class WGANGP():
             if self.critic_batch_norm_momentum and i > 0:
                 x = BatchNormalization(momentum = self.critic_batch_norm_momentum)(x)
 
-            x = self.get_activation()(x)
+            x = self.get_activation(self.critic_activation)(x)
 
             if self.critic_dropout_rate:
                 x = Dropout(rate = self.critic_dropout_rate)(x)
 
         x = Flatten()(x)
 
-        x = Dense(512, activation=None
-        , kernel_initializer = self.weight_init
-        )(x)
+        # x = Dense(512, kernel_initializer = self.weight_init)(x)
 
-        x = self.get_activation()(x)
+        # x = self.get_activation(self.critic_activation)(x)
         
         critic_output = Dense(1, activation=None
         , kernel_initializer = self.weight_init
@@ -187,7 +180,7 @@ class WGANGP():
         if self.generator_batch_norm_momentum:
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
         
-        x = self.get_activation()(x)
+        x = self.get_activation(self.generator_activation)(x)
 
         x = Reshape(self.generator_initial_dense_layer_size)(x)
 
@@ -196,24 +189,32 @@ class WGANGP():
 
         for i in range(self.n_layers_generator):
 
-            # if self.generator_upsample[i]:
-            #     x = UpSampling2D()(x)
-
-            x = Conv2DTranspose(
+            if self.generator_upsample[i] == 2:
+                x = UpSampling2D()(x)
+                x = Conv2D(
                 filters = self.generator_conv_filters[i]
                 , kernel_size = self.generator_conv_kernel_size[i]
                 , padding = self.generator_conv_padding
-                , strides = self.generator_conv_strides[i]
                 , name = 'generator_conv_' + str(i)
                 , kernel_initializer = self.weight_init
                 )(x)
+            else:
+
+                x = Conv2DTranspose(
+                    filters = self.generator_conv_filters[i]
+                    , kernel_size = self.generator_conv_kernel_size[i]
+                    , padding = self.generator_conv_padding
+                    , strides = self.generator_conv_strides[i]
+                    , name = 'generator_conv_' + str(i)
+                    , kernel_initializer = self.weight_init
+                    )(x)
 
             if i < self.n_layers_generator - 1:
 
                 if self.generator_batch_norm_momentum:
                     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
-                x = self.get_activation()(x)
+                x = self.get_activation(self.generator_activation)(x)
                 
             else:
                 x = Activation('tanh')(x)
@@ -437,8 +438,10 @@ class WGANGP():
             self.plot_model(folder)
 
     def save_model(self, run_folder):
-        with open(os.path.join(run_folder, 'model.pkl'), 'wb') as f:
-            pickle.dump(self, f)
+        self.model.save(os.path.join(run_folder, 'model.h5'))
+        self.critic.save(os.path.join(run_folder, 'critic.h5'))
+        self.generator.save(os.path.join(run_folder, 'generator.h5'))
+        pickle.dump(self, open( "obj.pkl", "wb" ))
 
     def load_weights(self, filepath):
         self.model.load_weights(filepath)

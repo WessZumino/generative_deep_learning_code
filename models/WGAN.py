@@ -87,13 +87,13 @@ class WGAN():
         self._build_adversarial()
 
     def wasserstein(self, y_true, y_pred):
-        return K.mean(y_true * y_pred)
+        return - K.mean(y_true * y_pred)
 
-    def get_activation(self):
-        if self.critic_activation == 'leaky_relu':
+    def get_activation(self, activation):
+        if activation == 'leaky_relu':
             layer = LeakyReLU(alpha = 0.2)
         else:
-            layer = Activation(self.critic_activation)
+            layer = Activation(activation)
         return layer
 
     def _build_critic(self):
@@ -117,12 +117,16 @@ class WGAN():
             if self.critic_batch_norm_momentum and i > 0:
                 x = BatchNormalization(momentum = self.critic_batch_norm_momentum)(x)
 
-            x = self.get_activation()(x)
+            x = self.get_activation(self.critic_activation)(x)
 
             if self.critic_dropout_rate:
                 x = Dropout(rate = self.critic_dropout_rate)(x)
 
         x = Flatten()(x)
+
+        # x = Dense(512, kernel_initializer = self.weight_init)(x)
+
+        # x = self.get_activation(self.critic_activation)(x)
         
         critic_output = Dense(1, activation=None
         , kernel_initializer = self.weight_init
@@ -145,11 +149,10 @@ class WGAN():
         )(x)
 
         
-
         if self.generator_batch_norm_momentum:
             x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
-        x = self.get_activation()(x)
+        x = self.get_activation(self.generator_activation)(x)
 
         x = Reshape(self.generator_initial_dense_layer_size)(x)
 
@@ -160,22 +163,30 @@ class WGAN():
 
             if self.generator_upsample[i] == 2:
                 x = UpSampling2D()(x)
-
-            x = Conv2DTranspose(
+                x = Conv2D(
                 filters = self.generator_conv_filters[i]
                 , kernel_size = self.generator_conv_kernel_size[i]
                 , padding = self.generator_conv_padding
-                , strides = self.generator_conv_strides[i]
                 , name = 'generator_conv_' + str(i)
                 , kernel_initializer = self.weight_init
                 )(x)
+            else:
+
+                x = Conv2DTranspose(
+                    filters = self.generator_conv_filters[i]
+                    , kernel_size = self.generator_conv_kernel_size[i]
+                    , padding = self.generator_conv_padding
+                    , strides = self.generator_conv_strides[i]
+                    , name = 'generator_conv_' + str(i)
+                    , kernel_initializer = self.weight_init
+                    )(x)
 
             if i < self.n_layers_generator - 1:
 
                 if self.generator_batch_norm_momentum:
                     x = BatchNormalization(momentum = self.generator_batch_norm_momentum)(x)
 
-                x = self.get_activation()(x)
+                x = self.get_activation(self.generator_activation)(x)
             
             else:
                 x = Activation('tanh')(x)
@@ -246,16 +257,9 @@ class WGAN():
         noise = np.random.normal(0, 1, (batch_size, self.z_dim))
         gen_imgs = self.generator.predict(noise)
 
-        # x = np.concatenate([true_imgs, gen_imgs])
-        # y = np.concatenate([valid, fake])
-
         d_loss_real =   self.critic.train_on_batch(true_imgs, valid)
         d_loss_fake =   self.critic.train_on_batch(gen_imgs, fake)
-        d_loss = d_loss_real + d_loss_fake
-
-        # d_loss =   self.critic.train_on_batch(x, y)
-        # d_loss_real = 0
-        # d_loss_fake = 0
+        d_loss = 0.5 * (d_loss_real + d_loss_fake)
 
         for l in self.critic.layers:
             weights = l.get_weights()
@@ -266,11 +270,12 @@ class WGAN():
         
         #     weights = l.get_weights()
         #     if 'batch_normalization' in l.get_config()['name']:
-        #         weights = [np.clip(w, -0.01, 0.01) for w in weights[:2]]+ weights[2:]
+        #         pass
+        #         # weights = [np.clip(w, -0.01, 0.01) for w in weights[:2]] + weights[2:]
         #     else:
         #         weights = [np.clip(w, -0.01, 0.01) for w in weights]
             
-            # l.set_weights(weights)
+        #     l.set_weights(weights)
 
         return [d_loss, d_loss_real, d_loss_fake]
 
@@ -281,11 +286,11 @@ class WGAN():
 
 
     def train(self, x_train, batch_size, epochs, run_folder, print_every_n_batches = 10
-    , n_critic = 5
-    , clip_threshold = 0.01
-    , large_it_critic = 25
-    , large_n_critic = 100
-    , using_generator = False):
+        , n_critic = 5
+        , clip_threshold = 0.01
+        , large_it_critic = 25
+        , large_n_critic = 100
+        , using_generator = False):
 
         for epoch in range(self.epoch, self.epoch + epochs):
 
@@ -378,8 +383,10 @@ class WGAN():
             self.plot_model(folder)
 
     def save_model(self, run_folder):
-        with open(os.path.join(run_folder, 'model.pkl'), 'wb') as f:
-            pickle.dump(self, f)
+        self.model.save(os.path.join(run_folder, 'model.h5'))
+        self.critic.save(os.path.join(run_folder, 'critic.h5'))
+        self.generator.save(os.path.join(run_folder, 'generator.h5'))
+        pickle.dump(self, open( "obj.pkl", "wb" ))
 
     def load_weights(self, filepath):
         self.model.load_weights(filepath)
