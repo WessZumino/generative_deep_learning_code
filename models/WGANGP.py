@@ -98,11 +98,11 @@ class WGANGP():
 
         self._build_adversarial()
 
-    def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
+    def gradient_penalty_loss(self, y_true, y_pred, interpolated_samples):
         """
         Computes gradient penalty based on prediction and weighted real / fake samples
         """
-        gradients = K.gradients(y_pred, averaged_samples)[0]
+        gradients = K.gradients(y_pred, interpolated_samples)[0]
         # compute the euclidean norm by squaring ...
         gradients_sqr = K.square(gradients)
         #   ... summing over the rows ...
@@ -117,11 +117,6 @@ class WGANGP():
 
     def wasserstein(self, y_true, y_pred):
         return -K.mean(y_true * y_pred)
-
-
-    def mean_pred(self, y_true, y_pred):
-
-        return K.mean(y_pred)
 
     def get_activation(self, activation):
         if activation == 'leaky_relu':
@@ -268,9 +263,9 @@ class WGANGP():
         validity_interpolated = self.critic(interpolated_img)
 
         # Use Python partial to provide loss function with additional
-        # 'averaged_samples' argument
+        # 'interpolated_samples' argument
         partial_gp_loss = partial(self.gradient_penalty_loss,
-                          averaged_samples=interpolated_img)
+                          interpolated_samples=interpolated_img)
         partial_gp_loss.__name__ = 'gradient_penalty' # Keras requires function names
 
         self.critic_model = Model(inputs=[real_img, z_disc],
