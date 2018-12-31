@@ -342,9 +342,7 @@ class WGANGP():
 
             g_loss = self.train_generator(batch_size)
 
-            # Plot the progress
-            # print ("%d (%d, %d) [D loss: (%.1f)(R %.1f, F %.1f, G %.1f)] [D acc: (R %.3f, F %.3f)] [D mean: (R %.1f, F %.1f)]" % (epoch, critic_loops, 1, d_loss[0], d_loss[1],d_loss[2],d_loss[3],d_loss[4],d_loss[6],d_loss[5],d_loss[7]))
-            # print ("%d (%d, %d) [G loss: %.1f] [G acc: %.3f] [G mean: %.1f]" % (epoch, critic_loops, 1, g_loss[0], g_loss[1], g_loss[2]))
+            
             print ("%d (%d, %d) [D loss: (%.1f)(R %.1f, F %.1f, G %.1f)] [G loss: %.1f]" % (epoch, critic_loops, 1, d_loss[0], d_loss[1],d_loss[2],d_loss[3],g_loss))
             
 
